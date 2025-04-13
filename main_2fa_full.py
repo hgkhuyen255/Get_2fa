@@ -71,7 +71,10 @@ async def add_secret(update: Update, context: CallbackContext.DEFAULT_TYPE):
     text = update.message.text
     lines = text.split("\n")
     if len(lines) < 2:
-        await update.message.reply_text("❌ Định dạng sai. Gửi:
+        await update.message.reply_text(
+            "❌ Định dạng sai. Gửi:\n<code>/add email@example.com\\nSECRET</code>",
+            parse_mode="HTML"
+        )
 <code>/add email@example.com\nSECRET</code>", parse_mode="HTML")
         return
     email = lines[0].replace("/add", "").strip()
