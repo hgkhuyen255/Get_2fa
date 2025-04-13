@@ -5,7 +5,6 @@ import pyotp
 import requests
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from github import Github
 
 app = FastAPI()
@@ -74,8 +73,7 @@ async def telegram_webhook(req: Request):
         secret = secrets.get(email)
         if secret:
             code = pyotp.TOTP(secret).now()
-            reply(f"🔐 <b>{email}</b>
-<code>{code}</code>")
+            reply(f"🔐 <b>{email}</b>\n<code>{code}</code>")
         else:
             reply("❌ Không tìm thấy email trong hệ thống.")
     else:
