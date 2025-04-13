@@ -1,3 +1,4 @@
+
 import os
 import json
 import requests
@@ -10,28 +11,24 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIST_ID = os.getenv("GIST_ID")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-
 def get_secrets():
     url = f"https://api.github.com/gists/{GIST_ID}"
     headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
-    response = requests.get(url, headers=headers)
-    data = response.json()
+    res = requests.get(url, headers=headers)
+    data = res.json()
     content = data["files"]["secrets.json"]["content"]
     return json.loads(content)
-
 
 def update_secrets(data):
     url = f"https://api.github.com/gists/{GIST_ID}"
     headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
-    updated = {"files": {"secrets.json": {"content": json.dumps(data, indent=2)}}}
-    requests.patch(url, headers=headers, json=updated)
-
+    update = {"files": {"secrets.json": {"content": json.dumps(data, indent=2)}}}
+    requests.patch(url, headers=headers, json=update)
 
 def reply(chat_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     requests.post(url, json=payload)
-
 
 @app.post("/webhook")
 async def webhook(req: Request):
@@ -39,7 +36,6 @@ async def webhook(req: Request):
     msg = data.get("message")
     if not msg:
         return {"ok": True}
-
     chat_id = msg["chat"]["id"]
     text = msg.get("text", "").strip()
     secrets = get_secrets()
