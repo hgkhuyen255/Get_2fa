@@ -33,7 +33,7 @@ def save_secrets(secrets):
     requests.patch(url, headers=HEADERS, json=data)
 
 
-@app.post("/")
+@app.post("/webhook")
 async def handle_message(request: Request):
     body = await request.json()
     message = body.get("message", {}).get("text", "")
@@ -72,7 +72,6 @@ async def handle_message(request: Request):
         else:
             reply = "❌ Không tìm thấy secret cho email này"
 
-    # Gửi phản hồi về Telegram
     token = os.getenv("BOT_TOKEN")
     telegram_url = f"https://api.telegram.org/bot{token}/sendMessage"
     requests.post(telegram_url, json={"chat_id": chat_id, "text": reply})
