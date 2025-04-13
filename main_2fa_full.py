@@ -1,4 +1,3 @@
-
 import os
 import json
 import requests
@@ -48,8 +47,7 @@ async def webhook(req: Request):
     if text.startswith("/start"):
         reply(chat_id, "👋 Gửi email để nhận mã 2FA. Dùng /add, /edit, /delete.")
     elif text.startswith("/add") or text.startswith("/edit"):
-        lines = text.split("
-")
+        lines = text.split("\n")
         if len(lines) >= 2:
             email = lines[0].split(maxsplit=1)[-1].strip()
             secret = lines[1].strip()
@@ -57,8 +55,7 @@ async def webhook(req: Request):
             update_secrets(secrets)
             reply(chat_id, f"✅ Đã lưu <b>{email}</b>")
         else:
-            reply(chat_id, "❌ Sai cú pháp. Gửi:
-<code>/add email\nsecret</code>")
+            reply(chat_id, "❌ Sai cú pháp. Gửi:\n<code>/add email\nsecret</code>")
     elif text.startswith("/delete"):
         email = text.split(maxsplit=1)[-1].strip()
         if email in secrets:
@@ -75,4 +72,8 @@ async def webhook(req: Request):
         else:
             reply(chat_id, "❌ Không tìm thấy email trong hệ thống.")
     else:
-        reply(chat_id, "🤖 Không hiểu yêu cầu. Gửi /start để bắt đầu.") 
+        reply(chat_id, "🤖 Không hiểu yêu cầu. Gửi /start để bắt đầu.")
+
+@app.get("/")
+def root():
+    return {"status": "ok"}
