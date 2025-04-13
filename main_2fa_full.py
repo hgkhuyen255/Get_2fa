@@ -1,75 +1,102 @@
-
+from fastapi import FastAPI, Request
 import os
 import json
-import requests
 import pyotp
-from fastapi import FastAPI, Request
+import httpx
 
 app = FastAPI()
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIST_ID = os.getenv("GIST_ID")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GIST_API = f"https://api.github.com/gists/{GIST_ID}"
 
-def get_secrets():
-    url = f"https://api.github.com/gists/{GIST_ID}"
-    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
-    res = requests.get(url, headers=headers)
-    data = res.json()
-    content = data["files"]["secrets.json"]["content"]
-    return json.loads(content)
+def load_secrets():
+    try:
+        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+        r = httpx.get(GIST_API, headers=headers).json()
+        content = r["files"]["secrets.json"]["content"]
+        return json.loads(content)
+    except:
+        return {}
 
-def update_secrets(data):
-    url = f"https://api.github.com/gists/{GIST_ID}"
-    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
-    update = {"files": {"secrets.json": {"content": json.dumps(data, indent=2)}}}
-    requests.patch(url, headers=headers, json=update)
-
-def reply(chat_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-    requests.post(url, json=payload)
+def save_secrets(data):
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    payload = {
+        "files": {
+            "secrets.json": {
+                "content": json.dumps(data, indent=2)
+            }
+        }
+    }
+    httpx.patch(GIST_API, headers=headers, json=payload)
 
 @app.post("/webhook")
 async def webhook(req: Request):
     data = await req.json()
-    msg = data.get("message")
-    if not msg:
+    message = data.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "")
+
+    if not chat_id or not text:
         return {"ok": True}
-    chat_id = msg["chat"]["id"]
-    text = msg.get("text", "").strip()
-    secrets = get_secrets()
+
+    def reply(msg):
+        httpx.post(f"https://api.telegram.org/bot{os.getenv('BOT_TOKEN')}/sendMessage", json={
+            "chat_id": chat_id,
+            "text": msg,
+            "parse_mode": "HTML"
+        })
+
+    secrets = load_secrets()
 
     if text.startswith("/start"):
-        reply(chat_id, "👋 Gửi email để nhận mã 2FA. Dùng /add, /edit, /delete.")
-    elif text.startswith("/add") or text.startswith("/edit"):
-        lines = text.split("\n")
+        reply("👋 Gửi email để nhận mã 2FA. Dùng /add, /edit, /delete.")
+    elif text.startswith("/add"):
+        lines = text.split("
+")
         if len(lines) >= 2:
-            email = lines[0].split(maxsplit=1)[-1].strip()
+            email = lines[0].split(" ", 1)[-1].strip()
             secret = lines[1].strip()
             secrets[email] = secret
-            update_secrets(secrets)
-            reply(chat_id, f"✅ Đã lưu <b>{email}</b>")
+            save_secrets(secrets)
+            reply(f"✅ Đã thêm {email}.")
         else:
-            reply(chat_id, "❌ Sai cú pháp. Gửi:\n<code>/add email\nsecret</code>")
+            reply("⚠️ Sai cú pháp. Dùng /add email\nsecret")
+    elif text.startswith("/edit"):
+        lines = text.split("
+")
+        if len(lines) >= 2:
+            email = lines[0].split(" ", 1)[-1].strip()
+            secret = lines[1].strip()
+            if email in secrets:
+                secrets[email] = secret
+                save_secrets(secrets)
+                reply(f"✏️ Đã sửa {email}.")
+            else:
+                reply("❌ Không tìm thấy email trong hệ thống.")
+        else:
+            reply("⚠️ Sai cú pháp. Dùng /edit email\nsecret")
     elif text.startswith("/delete"):
-        email = text.split(maxsplit=1)[-1].strip()
-        if email in secrets:
-            del secrets[email]
-            update_secrets(secrets)
-            reply(chat_id, f"🗑️ Đã xóa <b>{email}</b>")
+        parts = text.split(" ", 1)
+        if len(parts) == 2:
+            email = parts[1].strip()
+            if email in secrets:
+                secrets.pop(email)
+                save_secrets(secrets)
+                reply(f"🗑️ Đã xoá {email}.")
+            else:
+                reply("❌ Không tìm thấy email trong hệ thống.")
         else:
-            reply(chat_id, "❌ Không tìm thấy email để xóa.")
-    elif "@" in text:
+            reply("⚠️ Sai cú pháp. Dùng /delete email")
+    else:
         email = text.strip()
         if email in secrets:
             code = pyotp.TOTP(secrets[email]).now()
-            reply(chat_id, f"🔐 <b>{email}</b>: <code>{code}</code>")
+            reply(f"🔐 <b>{email}</b>: <code>{code}</code>")
         else:
-            reply(chat_id, "❌ Không tìm thấy email trong hệ thống.")
-    else:
-        reply(chat_id, "🤖 Không hiểu yêu cầu. Gửi /start để bắt đầu.")
+            reply("❌ Không tìm thấy email trong hệ thống.")
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
+    return {"ok": True}
