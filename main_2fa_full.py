@@ -1,82 +1,94 @@
-
 import json
 import os
-import pyotp
 import requests
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from github import Github
+from fastapi.responses import HTMLResponse
 
 app = FastAPI()
 
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
-GIST_ID = os.environ.get("GIST_ID")
-HEADERS = {"Accept": "application/vnd.github.v3+json"}
-g = Github(GITHUB_TOKEN)
-gist = g.get_gist(GIST_ID)
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+DATA_FILE = "secrets.json"
 
 def load_data():
-    file = gist.files["secrets.json"]
-    return json.loads(file.content)
+    if not os.path.exists(DATA_FILE):
+        return {}
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
 def save_data(data):
-    gist.edit(files={"secrets.json": {"content": json.dumps(data)}})
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
-@app.post("/")
-async def telegram_webhook(req: Request):
-    body = await req.json()
-    message = body.get("message", {}).get("text", "")
-    chat_id = body.get("message", {}).get("chat", {}).get("id")
+def reply(chat_id, text, parse_mode="HTML"):
+    url = f"https://api.telegram.org/bot{os.getenv('BOT_TOKEN')}/sendMessage"
+    requests.post(url, json={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode
+    })
 
-    if not message or not chat_id:
-        return JSONResponse(content={"ok": True})
+@app.post("/webhook")
+async def webhook(req: Request):
+    data = await req.json()
+    message = data.get("message", {})
+    text = message.get("text", "")
+    chat_id = message.get("chat", {}).get("id")
 
-    secrets = load_data()
+    if not chat_id or not text:
+        return {"ok": True}
 
-    def reply(text):
-        requests.post(
-            f"https://api.telegram.org/bot{os.environ['BOT_TOKEN']}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-        )
-
-    if message.startswith("/start"):
-        reply("👋 Gửi email để nhận mã 2FA. Dùng <code>/add</code>, <code>/edit</code>, <code>/delete</code>.")
-    elif message.startswith("/add "):
-        try:
-            _, email, secret = message.split()
-            secrets[email] = secret
-            save_data(secrets)
-            reply("✅ Đã thêm thành công.")
-        except:
-            reply("❌ Sai cú pháp. Dùng /add email secret")
-    elif message.startswith("/edit "):
-        try:
-            _, email, secret = message.split()
-            if email in secrets:
-                secrets[email] = secret
-                save_data(secrets)
-                reply("✅ Đã sửa thành công.")
+    if text.startswith("/start"):
+        reply(chat_id, "👋 Gửi email để nhận mã 2FA. Dùng <code>/add</code>, <code>/edit</code>, <code>/delete</code>.")
+    elif text.startswith("/add "):
+        lines = text.split("
+")
+        if len(lines) >= 2:
+            email = lines[0].replace("/add", "").strip()
+            secret = lines[1].strip()
+            data = load_data()
+            data[email] = secret
+            save_data(data)
+            reply(chat_id, f"✅ Đã lưu <b>{email}</b>.")
+        else:
+            reply(chat_id, "❌ Sai cú pháp. Gửi:
+<code>/add email@example.com</code>
+<code>SECRETKEY</code>")
+    elif text.startswith("/delete "):
+        email = text.replace("/delete", "").strip()
+        data = load_data()
+        if email in data:
+            del data[email]
+            save_data(data)
+            reply(chat_id, f"🗑️ Đã xoá <b>{email}</b>.")
+        else:
+            reply(chat_id, "❌ Không tìm thấy email trong hệ thống.")
+    elif text.startswith("/edit "):
+        lines = text.split("
+")
+        if len(lines) >= 2:
+            email = lines[0].replace("/edit", "").strip()
+            secret = lines[1].strip()
+            data = load_data()
+            if email in data:
+                data[email] = secret
+                save_data(data)
+                reply(chat_id, f"✏️ Đã cập nhật <b>{email}</b>.")
             else:
-                reply("❌ Không tìm thấy email.")
-        except:
-            reply("❌ Sai cú pháp. Dùng /edit email secret")
-    elif message.startswith("/delete "):
-        email = message.replace("/delete ", "").strip()
-        if email in secrets:
-            secrets.pop(email)
-            save_data(secrets)
-            reply("✅ Đã xoá thành công.")
+                reply(chat_id, "❌ Không tìm thấy email trong hệ thống.")
         else:
-            reply("❌ Không tìm thấy email.")
-    elif "@" in message:
-        email = message.strip()
-        secret = secrets.get(email)
-        if secret:
-            code = pyotp.TOTP(secret).now()
-            reply(f"🔐 <b>{email}</b>\n<code>{code}</code>")
-        else:
-            reply("❌ Không tìm thấy email trong hệ thống.")
+            reply(chat_id, "❌ Sai cú pháp. Gửi:
+<code>/edit email@example.com</code>
+<code>NEWSECRETKEY</code>")
     else:
-        reply("❓ Không hiểu lệnh.")
+        email = text.strip()
+        data = load_data()
+        if email in data:
+            reply(chat_id, f"🔐 <b>{email}</b>:
+<code>{data[email]}</code>")
+        else:
+            reply(chat_id, "❌ Không tìm thấy email trong hệ thống.")
 
-    return JSONResponse(content={"ok": True})
+    return {"ok": True}
