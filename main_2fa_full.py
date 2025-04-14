@@ -1,95 +1,102 @@
-import json
 import os
+import json
+import pyotp
 import requests
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse
-import pyotp
+from fastapi.responses import HTMLResponse
+from dotenv import load_dotenv
 
-app = FastAPI()
+load_dotenv()
 
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_SECRET_PATH = "/webhook"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIST_ID = os.getenv("GIST_ID")
-HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"}
 
-secrets_cache = {}
+app = FastAPI()
+secrets = {}
 
 def load_secrets():
-    global secrets_cache
-    try:
-        url = f"https://api.github.com/gists/{GIST_ID}"
-        r = requests.get(url, headers=HEADERS)
-        files = r.json().get("files", {})
-        content = files.get("secrets.json", {}).get("content", "{}")
-        secrets_cache = json.loads(content)
-        print("🔄 Secrets loaded from Gist.")
-    except Exception as e:
-        print("⚠️ Failed to load secrets:", e)
-        secrets_cache = {}
+    global secrets
+    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+    r = requests.get(f"https://api.github.com/gists/{GIST_ID}", headers=headers)
+    data = r.json()
+    secrets = json.loads(data["files"]["secrets.json"]["content"])
 
 def save_secrets():
-    try:
-        url = f"https://api.github.com/gists/{GIST_ID}"
-        data = {
-            "files": {
-                "secrets.json": {
-                    "content": json.dumps(secrets_cache, indent=4)
-                }
+    headers = {
+        "Authorization": f"token {GITHUB_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "files": {
+            "secrets.json": {
+                "content": json.dumps(secrets, indent=2)
             }
         }
-        response = requests.patch(url, headers=HEADERS, json=data)
-        print("💾 Gist save:", response.status_code, response.text)
-        return response.ok
-    except Exception as e:
-        print("⚠️ Failed to save secrets:", e)
-        return False
+    }
+    requests.patch(f"https://api.github.com/gists/{GIST_ID}", headers=headers, json=payload)
+
+def get_2fa(secret):
+    return pyotp.TOTP(secret).now()
 
 @app.on_event("startup")
-async def startup_event():
+def startup_event():
     load_secrets()
 
-@app.post("/webhook")
-async def handle_message(request: Request):
-    body = await request.json()
-    message = body.get("message", {}).get("text", "")
-    chat_id = body.get("message", {}).get("chat", {}).get("id", "")
+@app.post(WEBHOOK_SECRET_PATH)
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    if "message" in data:
+        msg = data["message"]
+        chat_id = msg["chat"]["id"]
+        text = msg.get("text", "")
 
-    reply = "Xin chào"
-    parts = message.strip().split()
+        def reply(message):
+            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", json={
+                "chat_id": chat_id,
+                "text": message,
+                "parse_mode": "HTML"
+            })
 
-    if len(parts) >= 1:
-        command = parts[0].lower()
-
-        if command == "add" and len(parts) == 3:
-            name, secret = parts[1], parts[2]
-            secrets_cache[name] = secret
-            save_secrets()
-            reply = f"✅ Đã thêm {name}"
-
-        elif command == "edit" and len(parts) == 3:
-            name, secret = parts[1], parts[2]
-            if name in secrets_cache:
-                secrets_cache[name] = secret
+        lines = text.strip().split("\n")
+        if lines[0].lower().startswith("/add") and len(lines) == 2:
+            name = lines[0][4:].strip()
+            secret = lines[1].strip()
+            if name and secret:
+                secrets[name] = secret
                 save_secrets()
-                reply = f"✏️ Đã sửa {name}"
+                reply("✅ Thêm thành công")
             else:
-                reply = "❌ Không tồn tại"
-
-        elif command == "delete" and len(parts) == 2:
-            name = parts[1]
-            if name in secrets_cache:
-                del secrets_cache[name]
+                reply("❌ Sai cú pháp. Gửi:\n/add tên\nSECRET")
+        elif lines[0].lower().startswith("/delete"):
+            name = lines[0][7:].strip()
+            if name in secrets:
+                secrets.pop(name)
                 save_secrets()
-                reply = f"🗑️ Đã xoá {name}"
+                reply("🗑️ Đã xoá")
             else:
-                reply = "❌ Không tồn tại"
+                reply("❌ Không tìm thấy")
+        elif lines[0].lower().startswith("/edit") and len(lines) == 2:
+            name = lines[0][5:].strip()
+            secret = lines[1].strip()
+            if name in secrets:
+                secrets[name] = secret
+                save_secrets()
+                reply("✏️ Đã cập nhật")
+            else:
+                reply("❌ Không tìm thấy để sửa")
+        elif text.lower().startswith("/start"):
+            reply("👋 Gửi tên để nhận mã 2FA.\nDùng /add, /edit, /delete.")
+        else:
+            name = text.strip()
+            if name in secrets:
+                reply(f"⏰ Mã 2FA: <b>{get_2fa(secrets[name])}</b>")
+            else:
+                reply("❌ Không tìm thấy tên trong hệ thống.")
 
-        elif message.strip() in secrets_cache:
-            name = message.strip()
-            totp = pyotp.TOTP(secrets_cache[name])
-            reply = f"⏱ Mã 2FA: {totp.now()}"
+    return {"ok": True}
 
-    token = os.getenv("BOT_TOKEN")
-    telegram_url = f"https://api.telegram.org/bot{token}/sendMessage"
-    requests.post(telegram_url, json={"chat_id": chat_id, "text": reply})
-
-    return PlainTextResponse("OK")
+@app.get("/", response_class=HTMLResponse)
+def root():
+    return "<h1>Get 2FA Bot đang chạy.</h1>"
