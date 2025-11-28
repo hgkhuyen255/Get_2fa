@@ -1,4 +1,3 @@
-
 import json
 import os
 import requests
@@ -8,9 +7,17 @@ import pyotp
 
 app = FastAPI()
 
+# Load env
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIST_ID = os.getenv("GIST_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 HEADERS = {"Authorization": f"token {GITHUB_TOKEN}"}
+
+
+@app.get("/")
+def home():
+    return {"status": "ok", "message": "2FA bot is running on Cloud Run"}
 
 
 def load_secrets():
@@ -36,11 +43,16 @@ def save_secrets(secrets):
 @app.post("/webhook")
 async def handle_message(request: Request):
     body = await request.json()
+
     message = body.get("message", {}).get("text", "")
     chat_id = body.get("message", {}).get("chat", {}).get("id", "")
-    secrets = load_secrets()
 
+    if not message or not chat_id:
+        return PlainTextResponse("Ignored")
+
+    secrets = load_secrets()
     reply = "Xin chào"
+
     command, *args = message.strip().split()
 
     if command.lower() == "add" and len(args) == 2:
@@ -48,6 +60,7 @@ async def handle_message(request: Request):
         secrets[email] = secret
         save_secrets(secrets)
         reply = "✅ Thêm thành công"
+
     elif command.lower() == "edit" and len(args) == 2:
         email, secret = args
         if email in secrets:
@@ -56,6 +69,7 @@ async def handle_message(request: Request):
             reply = "✅ Sửa thành công"
         else:
             reply = "❌ Không tồn tại email"
+
     elif command.lower() == "delete" and len(args) == 1:
         email = args[0]
         if email in secrets:
@@ -64,6 +78,7 @@ async def handle_message(request: Request):
             reply = "✅ Xoá thành công"
         else:
             reply = "❌ Không tồn tại email"
+
     elif "@" in message:
         email = message.strip()
         if email in secrets:
@@ -72,8 +87,7 @@ async def handle_message(request: Request):
         else:
             reply = "❌ Không tìm thấy secret cho email này"
 
-    token = os.getenv("BOT_TOKEN")
-    telegram_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(telegram_url, json={"chat_id": chat_id, "text": reply})
 
     return PlainTextResponse("OK")
